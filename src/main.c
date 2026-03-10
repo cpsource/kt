@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,6 +20,77 @@ static char *read_file(const char *path) {
     buf[n] = '\0';
     fclose(f);
     return buf;
+}
+
+/* Extract directory part of a file path */
+static char *dir_of(const char *path) {
+    const char *last = strrchr(path, '/');
+    if (!last) return strdup(".");
+    size_t len = (size_t)(last - path);
+    char *dir = malloc(len + 1);
+    memcpy(dir, path, len);
+    dir[len] = '\0';
+    return dir;
+}
+
+/* Preprocess #include directives, expanding them inline.
+ * Supports: #include "file.kth"
+ * Resolves relative to the directory of the including file. */
+static char *preprocess(const char *src, const char *filepath) {
+    char *dir = dir_of(filepath);
+    size_t cap = strlen(src) * 2 + 1024;
+    char *out = malloc(cap);
+    size_t olen = 0;
+    const char *p = src;
+
+    while (*p) {
+        /* Check for #include at start of line */
+        if (*p == '#' && strncmp(p, "#include", 8) == 0) {
+            p += 8;
+            while (*p == ' ' || *p == '\t') p++;
+            char delim_end = 0;
+            if (*p == '"') { delim_end = '"'; p++; }
+            else if (*p == '<') { delim_end = '>'; p++; }
+            else { /* not a valid include, copy literally */
+                out[olen++] = '#';
+                continue;
+            }
+            const char *fname_start = p;
+            while (*p && *p != delim_end && *p != '\n') p++;
+            size_t fname_len = (size_t)(p - fname_start);
+            if (*p == delim_end) p++;
+            while (*p && *p != '\n') p++; /* skip rest of line */
+            if (*p == '\n') p++;
+
+            /* Build include path */
+            char incpath[1024];
+            snprintf(incpath, sizeof(incpath), "%s/%.*s", dir, (int)fname_len, fname_start);
+
+            /* Read and recursively preprocess the included file */
+            char *inc_src = read_file(incpath);
+            char *inc_pp = preprocess(inc_src, incpath);
+            size_t inc_len = strlen(inc_pp);
+
+            /* Grow output buffer if needed */
+            while (olen + inc_len + strlen(p) + 2 > cap) {
+                cap *= 2;
+                out = realloc(out, cap);
+            }
+            memcpy(out + olen, inc_pp, inc_len);
+            olen += inc_len;
+            /* Ensure newline after include */
+            if (inc_len > 0 && inc_pp[inc_len - 1] != '\n')
+                out[olen++] = '\n';
+            free(inc_pp);
+            free(inc_src);
+        } else {
+            if (olen + 1 >= cap) { cap *= 2; out = realloc(out, cap); }
+            out[olen++] = *p++;
+        }
+    }
+    out[olen] = '\0';
+    free(dir);
+    return out;
 }
 
 int main(int argc, char **argv) {
@@ -51,7 +123,9 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    char *src = read_file(input);
+    char *raw_src = read_file(input);
+    char *src = preprocess(raw_src, input);
+    free(raw_src);
     Arena arena = arena_new();
 
     Lexer lexer = lexer_new(src, input, &arena);

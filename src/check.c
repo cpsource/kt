@@ -3,16 +3,14 @@
 
 #define MAX_LOCALS 64
 
-/* Collect let-declared names in a function body, then check if any
- * return statement hands back a reference to one of them. */
-
 static const char *locals[MAX_LOCALS];
 static int nlocals;
 
 static void collect_locals(AstNode *block) {
+    if (!block || block->kind != NODE_BLOCK) return;
     for (int i = 0; i < block->block.nstmts; i++) {
         AstNode *stmt = block->block.stmts[i];
-        if (stmt->kind == NODE_LET) {
+        if (stmt->kind == NODE_LET && stmt->let.is_buffer) {
             if (nlocals < MAX_LOCALS)
                 locals[nlocals++] = stmt->let.name;
         }
@@ -27,13 +25,23 @@ static int is_local(const char *name) {
     return 0;
 }
 
-/* Check if an expression refers to a local stack variable */
 static void check_return_expr(AstNode *expr, SrcLoc ret_loc) {
+    if (!expr) return;
     if (expr->kind == NODE_IDENT && is_local(expr->ident.name)) {
         error_at(ret_loc,
             "returning pointer to stack-allocated '%s' — "
             "memory will be invalid after function returns",
             expr->ident.name);
+    }
+}
+
+static void check_block(AstNode *block) {
+    if (!block || block->kind != NODE_BLOCK) return;
+    for (int i = 0; i < block->block.nstmts; i++) {
+        AstNode *stmt = block->block.stmts[i];
+        if (stmt->kind == NODE_RETURN) {
+            check_return_expr(stmt->ret.expr, stmt->loc);
+        }
     }
 }
 
@@ -45,12 +53,7 @@ static void check_fn(AstNode *fn) {
     collect_locals(body);
     if (nlocals == 0) return;
 
-    for (int i = 0; i < body->block.nstmts; i++) {
-        AstNode *stmt = body->block.stmts[i];
-        if (stmt->kind == NODE_RETURN) {
-            check_return_expr(stmt->ret.expr, stmt->loc);
-        }
-    }
+    check_block(body);
 }
 
 void check_escape(AstNode *program) {

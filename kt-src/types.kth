@@ -1,0 +1,191 @@
+// types.kth — Shared type definitions for kt-src
+// This file is prepended to each .kt file during compilation.
+
+struct SrcLoc {
+    file: &str,
+    line: i32,
+    col: i32,
+}
+
+struct Arena {
+    base: *u8,
+    size: u64,
+    used: u64,
+}
+
+// TokenKind — must match C enum in src/token.h exactly
+enum TokenKind {
+    // Keywords
+    FN,          // 0
+    LET,         // 1
+    MUT,         // 2
+    RETURN,      // 3
+    IF,          // 4
+    ELSE,        // 5
+    WHILE,       // 6
+    FOR,         // 7
+    IN,          // 8
+    MATCH,       // 9
+    BREAK,       // 10
+    CONTINUE,    // 11
+    STRUCT,      // 12
+    ENUM,        // 13
+    IMPL,        // 14
+    TYPE,        // 15
+    TRUE,        // 16
+    FALSE,       // 17
+    // Literals / identifiers
+    IDENT,       // 18
+    STRING,      // 19
+    INT,         // 20
+    // Delimiters
+    LPAREN,      // 21
+    RPAREN,      // 22
+    LBRACE,      // 23
+    RBRACE,      // 24
+    LBRACKET,    // 25
+    RBRACKET,    // 26
+    // Punctuation
+    COMMA,       // 27
+    COLON,       // 28
+    DOT,         // 29
+    AT,          // 30
+    ARROW,       // 31  ->
+    FAT_ARROW,   // 32  =>
+    DOTDOT,      // 33  ..
+    COLONCOLON,  // 34  ::
+    // Assignment
+    EQ,          // 35  =
+    // Arithmetic operators
+    PLUS,        // 36
+    MINUS,       // 37
+    STAR,        // 38
+    SLASH,       // 39
+    PERCENT,     // 40
+    // Comparison operators
+    EQEQ,        // 41  ==
+    NEQ,         // 42  !=
+    LT,          // 43  <
+    GT,          // 44  >
+    LTEQ,        // 45  <=
+    GTEQ,        // 46  >=
+    // Logical operators
+    AND,         // 47  &&
+    OR,          // 48  ||
+    NOT,         // 49  !
+    // Bitwise operators
+    AMP,         // 50  &
+    PIPE,        // 51  |
+    CARET,       // 52  ^
+    TILDE,       // 53  ~
+    SHL,         // 54  <<
+    SHR,         // 55  >>
+    // End
+    EOF,         // 56
+}
+
+struct Token {
+    kind: TokenKind,
+    text: &str,
+    len: i32,
+    loc: SrcLoc,
+}
+
+struct Lexer {
+    src: &str,
+    file: &str,
+    pos: i32,
+    line: i32,
+    col: i32,
+    arena: &mut Arena,
+}
+
+// NodeKind — must match C enum in src/ast.h exactly
+enum NodeKind {
+    // Top-level
+    PROGRAM,     // 0
+    FN_DEF,      // 1
+    STRUCT_DEF,  // 2
+    ENUM_DEF,    // 3
+    // Statements
+    BLOCK,       // 4
+    EXPR_STMT,   // 5
+    RETURN,      // 6
+    LET,         // 7
+    ASSIGN,      // 8
+    IF,          // 9
+    WHILE,       // 10
+    FOR_RANGE,   // 11
+    MATCH,       // 12
+    BREAK,       // 13
+    CONTINUE,    // 14
+    // Expressions
+    CALL,        // 15
+    BINOP,       // 16
+    UNARY,       // 17
+    MEMBER,      // 18
+    INDEX,       // 19
+    STRING_LIT,  // 20
+    INT_LIT,     // 21
+    BOOL_LIT,    // 22
+    IDENT,       // 23
+    PATH,        // 24
+    STRUCT_LIT,  // 25
+    ADDR_OF,     // 26
+    // Annotation
+    ANNOTATION,  // 27
+}
+
+// AstNode — flat union layout (d0/d1/d2 are variant data):
+//   PROGRAM:    d0=decls       d1=ndecls
+//   FN_DEF:     d0=name        d1=body
+//   STRUCT_DEF: d0=name        d1=fields      d2=nfields
+//   ENUM_DEF:   d0=name        d1=variants    d2=nvariants
+//   BLOCK:      d0=stmts       d1=nstmts
+//   EXPR_STMT:  d0=expr
+//   RETURN:     d0=expr
+//   LET:        d0=name        d1=init        d2=size (for buffers)
+//   ASSIGN:     d0=target      d1=value
+//   IF:         d0=cond        d1=then_b      d2=else_b
+//   WHILE:      d0=cond        d1=body
+//   FOR_RANGE:  d0=var         d1=start       d2=end (body via extra)
+//   MATCH:      d0=expr        d1=arms        d2=narms
+//   BREAK:      (no data)
+//   CONTINUE:   (no data)
+//   CALL:       d0=name        d1=args        d2=nargs
+//   BINOP:      d0=op          d1=left        d2=right
+//   UNARY:      d0=op          d1=operand
+//   MEMBER:     d0=object      d1=field
+//   INDEX:      d0=object      d1=index       d2=is_word
+//   STRING_LIT: d0=value
+//   INT_LIT:    d0=value       d1=text
+//   BOOL_LIT:   d0=value
+//   IDENT:      d0=name
+//   PATH:       d0=base        d1=member
+//   STRUCT_LIT: d0=name        d1=field_names d2=field_values (nfields via extra)
+//   ADDR_OF:    d0=operand     d1=is_mut
+//   ANNOTATION: d0=name        d1=prompt      d2=child
+struct AstNode {
+    kind: NodeKind,
+    loc: SrcLoc,
+    d0: u64,
+    d1: u64,
+    d2: u64,
+}
+
+struct CodegenCtx {
+    out: *File,
+    strings: *&str,
+    nstrings: i32,
+    string_cap: i32,
+    local_names: *&str,
+    local_offsets: *i32,
+    nlocals: i32,
+    stack_size: i32,
+}
+
+struct Parser {
+    lexer: &mut Lexer,
+    arena: &mut Arena,
+    cur: Token,
+}
