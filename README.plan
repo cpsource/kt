@@ -1,0 +1,166 @@
+# kt — x86-64 Systems Language Compiler (Milestone 1: Hello World ELF)
+
+## Context
+
+We're building "kt", a new systems programming language targeting x86-64 with direct codegen, written in C. The compiler links against musl libc (at `musl/`, v1.2.5) for fully static binaries. The first milestone is compiling `fn main() { puts("Hello, world!") }` into a running ELF binary.
+
+## Project Structure
+
+```
+kt/
+  musl/                     # musl libc (existing, v1.2.5)
+  build/                    # all build artifacts
+    musl/                   # musl install prefix
+  src/                      # kt compiler (C)
+    main.c                  # driver: CLI args, read file, run pipeline
+    token.h                 # TokenKind enum, Token struct, SrcLoc
+    lexer.h / lexer.c       # tokenizer
+    ast.h / ast.c           # AST node types + constructors
+    parser.h / parser.c     # recursive descent parser
+    codegen.h / codegen.c   # x86-64 GAS assembly emitter
+    microparse.h / microparse.c  # @microparse: inline code gen via Claude API + .gen caching
+    error.h / error.c       # error reporting (file:line:col format)
+    arena.h / arena.c       # bump allocator for AST nodes/strings
+  tests/
+    hello.kt                # fn main() { puts("Hello, world!") }
+  Makefile                  # builds musl, ktc, and runs tests
+  .gitignore
+```
+
+## Implementation Steps
+
+### Step 1: Build infrastructure
+- Write `Makefile` with three targets:
+  - `musl`: `cd musl && ./configure --prefix=$(CURDIR)/build/musl --disable-shared && make -j && make install`
+  - `ktc`: compile all `src/*.c` with `gcc -std=c11 -Wall -Wextra -g -O2 -o build/ktc`
+  - `test`: run ktc on hello.kt -> assemble -> link -> execute
+- Write `.gitignore` (build/, *.o, *.s)
+- Run `make musl` to produce `build/musl/lib/{crt1.o,crti.o,crtn.o,libc.a}`
+
+### Step 2: Manual assembly smoke test
+- Hand-write assembly that calls `puts("Hello, world!")` and returns 0
+- Assemble with `as --64` and link with `ld -static` against musl CRT + libc.a
+- Verify the binary runs -- this validates the link strategy before writing any compiler code
+
+Link command:
+```
+ld -static -o build/hello \
+  build/musl/lib/crt1.o build/musl/lib/crti.o \
+  build/hello.o \
+  --start-group build/musl/lib/libc.a --end-group \
+  build/musl/lib/crtn.o
+```
+
+### Step 3: Arena allocator (`arena.h`, `arena.c`)
+- Bump allocator backed by `mmap(MAP_ANONYMOUS)`, 1 MB initial size
+- `arena_alloc(arena, size, align)` and `arena_free(arena)` (frees everything)
+
+### Step 4: Error module (`error.h`, `error.c`)
+- `error_at(SrcLoc, fmt, ...)` -- prints `file:line:col: error: msg` and exits
+- `warn_at(SrcLoc, fmt, ...)` -- prints warning, continues
+
+### Step 5: Lexer (`token.h`, `lexer.h`, `lexer.c`)
+- Tokens: `FN`, `IDENT`, `STRING`, `INT`, `LPAREN`, `RPAREN`, `LBRACE`, `RBRACE`, `COMMA`, `COLON`, `AT`, `EOF`
+- `AT` token (`@`) enables annotation parsing for `@microparse`
+- Keyword recognition: scan identifier, check if it matches `"fn"` -> emit `TOK_FN`
+- String literals with basic escape sequences (`\n`, `\\`, `\"`)
+
+### Step 6: AST + Parser (`ast.h`, `ast.c`, `parser.h`, `parser.c`)
+- Node kinds: `PROGRAM`, `FN_DEF`, `BLOCK`, `EXPR_STMT`, `CALL`, `STRING_LIT`, `INT_LIT`, `IDENT`, `ANNOTATION`
+- Each node has a `SrcLoc` for error reporting
+- `NODE_ANNOTATION` stores: name (e.g. "microparse"), prompt string, and the AST node it annotates
+- Recursive descent parser for this grammar:
+  ```
+  program    = (annotation? fn_def)*
+  annotation = "@" IDENT "(" STRING ")"
+  fn_def     = "fn" IDENT "(" ")" block
+  block      = "{" stmt* "}"
+  stmt       = expr_stmt
+  expr_stmt  = expr
+  expr       = call_expr | STRING | INT | IDENT
+  call_expr  = IDENT "(" args? ")"
+  args       = expr ("," expr)*
+  ```
+
+### Step 7: Codegen (`codegen.h`, `codegen.c`)
+- Emits GAS x86-64 assembly
+- String literals collected during codegen, emitted in `.rodata` at end
+- Function codegen: `.globl main` / `pushq %rbp` / `movq %rsp, %rbp` / body / `xorl %eax, %eax` / `popq %rbp` / `ret`
+- Function calls: load args into `%rdi`, `%rsi`, `%rdx`, `%rcx`, `%r8`, `%r9` per System V ABI, then `call symbol`
+- String args: `leaq .LC0(%rip), %rdi` (RIP-relative)
+
+Expected output for hello.kt:
+```asm
+    .text
+    .globl main
+    .type main, @function
+main:
+    pushq   %rbp
+    movq    %rsp, %rbp
+    leaq    .LC0(%rip), %rdi
+    call    puts
+    xorl    %eax, %eax
+    popq    %rbp
+    ret
+
+    .section .rodata
+.LC0:
+    .string "Hello, world!"
+```
+
+### Step 8: Driver (`main.c`) + end-to-end test
+- `ktc <input.kt> -o <output.s>`: read file, lex, parse, codegen, write .s
+- `make test` runs the full pipeline and executes the binary
+- Expected: prints "Hello, world!" and exits 0
+
+### Step 9: @microparse -- AI-powered inline code generation (`microparse.h`, `microparse.c`)
+
+A built-in compiler annotation that calls Claude API to generate kt code inline. The generated code replaces the annotation in the AST and gets compiled into the binary.
+
+Syntax examples:
+```kt
+@microparse("handle positive, zero, and negative cases")
+fn classify(x: i32) -> str { }
+
+@microparse("write a switch for HTTP status codes 200, 404, 500")
+fn status_message(code: i32) -> str { }
+```
+
+Compiler pipeline integration (between parse and codegen):
+```
+source.kt -> Lexer -> Parser -> AST
+                                  |
+                          microparse pass  <--  Claude API
+                                  |
+                          AST (with generated code spliced in)
+                                  |
+                               Codegen -> .s file
+```
+
+How it works:
+1. Parse: `@microparse("prompt")` before a fn with empty body -> `NODE_ANNOTATION` wrapping `NODE_FN_DEF`
+2. Cache check: hash(prompt + signature), look for `<source>.gen` file
+3. API call (cache miss): send prompt + signature to Claude, get kt source back
+4. Splice: re-lex/parse response, replace empty body in AST
+5. Cache write: save to `<source>.gen`
+6. Codegen: proceeds normally
+
+Caching:
+- `.kt.gen` files store generated code + hash
+- `--microparse-refresh` forces re-generation
+- `--skip-microparse` uses cache only
+- `ANTHROPIC_API_KEY` env var required
+
+## Key musl files (reference)
+- `musl/arch/x86_64/crt_arch.h` -- `_start` assembly entry point
+- `musl/crt/crt1.c` -- `_start_c` calls `__libc_start_main(main, argc, argv, ...)`
+- `musl/arch/x86_64/syscall_arch.h` -- syscall register conventions
+
+## Verification
+1. `make musl` -- builds musl, produces lib/libc.a and CRT objects
+2. `make ktc` -- builds the compiler with no warnings
+3. `make test` -- compiles hello.kt -> hello.s -> hello.o -> hello binary, runs it
+4. `./build/hello` prints "Hello, world!" and `echo $?` returns 0
+5. Write a test `.kt` file with `@microparse` annotation and empty function body
+6. `ANTHROPIC_API_KEY=... ./build/ktc tests/microparse_test.kt -o build/mp_test.s` -- calls Claude, generates body, compiles
+7. Verify `.kt.gen` cache file is created; re-running skips the API call
