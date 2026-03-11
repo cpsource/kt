@@ -4,7 +4,7 @@
 let ARENA_SIZE: u64 = 1048576  // 1 MB
 
 fn arena_new() -> Arena {
-    let base = mmap(0, ARENA_SIZE, 3, 34, -1, 0)  // PROT_READ|PROT_WRITE=3, MAP_PRIVATE|MAP_ANONYMOUS=0x22
+    let base = mmap(0, ARENA_SIZE, 3, 34, -1, 0)  // PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS
     if base == -1 {
         fprintf(stderr, "arena: mmap failed\n")
         exit(1)

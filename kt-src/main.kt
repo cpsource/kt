@@ -1,5 +1,5 @@
 #include "types.kth"
-// main.kt — Compiler driver: CLI args, read file, run pipeline
+// main.kt — Compiler driver: CLI args, read file, preprocess, run pipeline
 
 fn read_file(path: &str) -> &str {
     let f = fopen(path, "r")
@@ -15,6 +15,81 @@ fn read_file(path: &str) -> &str {
     buf[n] = 0
     fclose(f)
     return buf
+}
+
+fn dir_of(path: &str) -> &str {
+    let last = strrchr(path, 47)  // '/'
+    if last == 0 { return strdup(".") }
+    let len = last - path
+    let dir = malloc(len + 1)
+    memcpy(dir, path, len)
+    dir[len] = 0
+    return dir
+}
+
+fn preprocess(src: &str, filepath: &str) -> &str {
+    let dir = dir_of(filepath)
+    let mut cap: u64 = strlen(src) * 2 + 1024
+    let mut out = malloc(cap)
+    let mut olen: u64 = 0
+    let mut p = src
+
+    while p[0] != 0 {
+        // Check for #include at start of line
+        if p[0] == 35 && starts_with(p, "#include") && (p == src || p[-1] == 10) {
+            p = p + 8
+            while p[0] == 32 || p[0] == 9 { p = p + 1 }
+            let mut delim_end: u8 = 0
+            if p[0] == 34 { delim_end = 34; p = p + 1 }
+            else if p[0] == 60 { delim_end = 62; p = p + 1 }
+            else {
+                out[olen] = 35
+                olen = olen + 1
+                p = p + 1
+                continue
+            }
+            let fname_start = p
+            while p[0] != 0 && p[0] != delim_end && p[0] != 10 { p = p + 1 }
+            let fname_len = p - fname_start
+            if p[0] == delim_end { p = p + 1 }
+            while p[0] != 0 && p[0] != 10 { p = p + 1 }
+            if p[0] == 10 { p = p + 1 }
+
+            // Build include path
+            let mut incpath = malloc(1024)
+            snprintf(incpath, 1024, "%s/", dir)
+            let dir_len = strlen(incpath)
+            memcpy(incpath + dir_len, fname_start, fname_len)
+            incpath[dir_len + fname_len] = 0
+
+            let inc_src = read_file(incpath)
+            let inc_pp = preprocess(inc_src, incpath)
+            let inc_len = strlen(inc_pp)
+            free(incpath)
+
+            // Grow output if needed
+            while olen + inc_len + strlen(p) + 2 > cap {
+                cap = cap * 2
+                out = realloc(out, cap)
+            }
+            memcpy(out + olen, inc_pp, inc_len)
+            olen = olen + inc_len
+            if inc_len > 0 && inc_pp[inc_len - 1] != 10 {
+                out[olen] = 10
+                olen = olen + 1
+            }
+            free(inc_pp)
+            free(inc_src)
+        } else {
+            if olen + 1 >= cap { cap = cap * 2; out = realloc(out, cap) }
+            out[olen] = p[0]
+            olen = olen + 1
+            p = p + 1
+        }
+    }
+    out[olen] = 0
+    free(dir)
+    return out
 }
 
 fn kt_main() {
@@ -50,7 +125,9 @@ fn kt_main() {
         exit(1)
     }
 
-    let src = read_file(input)
+    let raw_src = read_file(input)
+    let src = preprocess(raw_src, input)
+    free(raw_src)
     let mut arena = arena_new()
 
     let mut lexer = lexer_new(src, input, arena)

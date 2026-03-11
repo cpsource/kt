@@ -46,17 +46,17 @@ fn cache_lookup(source_path: &str, hash: &str) -> &str {
     free(gpath)
     if content == 0 { return 0 }
 
-    // Format: "HASH:<hash>\n<source>"
     if !starts_with(content, "HASH:") { free(content); return 0 }
-    let nl = strchr(content, 10)  // '\n'
+    let nl = strchr(content, 10)
     if nl == 0 { free(content); return 0 }
 
-    let mut saved_hash: [u8; 64]
+    let mut saved_hash = malloc(64)
+    memset(saved_hash, 0, 64)
     let hlen = nl - (content + 5)
-    memcpy(&saved_hash, content + 5, hlen)
-    saved_hash[hlen] = 0
+    memcpy(saved_hash, content + 5, hlen)
 
-    if !streq(&saved_hash, hash) { free(content); return 0 }
+    if !streq(saved_hash, hash) { free(saved_hash); free(content); return 0 }
+    free(saved_hash)
 
     let source = strdup(nl + 1)
     free(content)
@@ -74,21 +74,21 @@ fn cache_write(source_path: &str, hash: &str, source: &str) {
 
 fn extract_fn_signature(f: *AstNode) -> &str {
     let buf = malloc(256)
-    snprintf(buf, 256, "fn %s()", f.d0)  // fn_def.name
+    snprintf(buf, 256, "fn %s()", f.d0)
     return buf
 }
 
-fn json_escape(dst: &mut str, dstlen: u64, src: &str) -> u64 {
+fn json_escape(dst: &str, dstlen: u64, src: &str) -> u64 {
     let mut w: u64 = 0
     let mut i: i32 = 0
     while src[i] != 0 && w + 6 < dstlen {
-        match src[i] {
-            34  => { dst[w] = 92; dst[w+1] = 34; w = w + 2 }   // \"
-            92  => { dst[w] = 92; dst[w+1] = 92; w = w + 2 }   // \\
-            10  => { dst[w] = 92; dst[w+1] = 110; w = w + 2 }  // \n
-            13  => { dst[w] = 92; dst[w+1] = 114; w = w + 2 }  // \r
-            9   => { dst[w] = 92; dst[w+1] = 116; w = w + 2 }  // \t
-        }
+        let c = src[i]
+        if c == 34 { dst[w] = 92; dst[w+1] = 34; w = w + 2 }
+        else if c == 92 { dst[w] = 92; dst[w+1] = 92; w = w + 2 }
+        else if c == 10 { dst[w] = 92; dst[w+1] = 110; w = w + 2 }
+        else if c == 13 { dst[w] = 92; dst[w+1] = 114; w = w + 2 }
+        else if c == 9 { dst[w] = 92; dst[w+1] = 116; w = w + 2 }
+        else { dst[w] = c; w = w + 1 }
         i = i + 1
     }
     dst[w] = 0
@@ -96,62 +96,67 @@ fn json_escape(dst: &mut str, dstlen: u64, src: &str) -> u64 {
 }
 
 fn call_claude_api(api_key: &str, prompt: &str, sig: &str, loc: SrcLoc) -> &str {
-    let mut esc_prompt: [u8; 2048]
-    let mut esc_sig: [u8; 512]
-    json_escape(&mut esc_prompt, 2048, prompt)
-    json_escape(&mut esc_sig, 512, sig)
+    let esc_prompt = malloc(2048)
+    let esc_sig = malloc(512)
+    json_escape(esc_prompt, 2048, prompt)
+    json_escape(esc_sig, 512, sig)
 
     let req = malloc(8192)
     snprintf(req, 8192,
         "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":1024,\"system\":\"You are a code generator for the kt language. kt syntax is similar to Rust. Respond with ONLY the function body code (the statements inside the braces), no explanation, no markdown fences.\",\"messages\":[{\"role\":\"user\",\"content\":\"Given this function signature: %s\\n\\nGenerate the function body for: %s\"}]}",
-        &esc_sig, &esc_prompt)
+        esc_sig, esc_prompt)
+    free(esc_prompt)
+    free(esc_sig)
 
-    let mut tmppath: [u8; 32]
-    memcpy(&mut tmppath, "/tmp/kt_mp_XXXXXX", 18)
-    let fd = mkstemp(&mut tmppath)
+    let tmppath = malloc(32)
+    memcpy(tmppath, "/tmp/kt_mp_XXXXXX", 18)
+    tmppath[18] = 0
+    let fd = mkstemp(tmppath)
     if fd < 0 { error_at(loc, "@microparse: failed to create temp file") }
     let tmpf = fdopen(fd, "w")
     fputs(req, tmpf)
     fclose(tmpf)
     free(req)
 
-    let mut outpath: [u8; 32]
-    memcpy(&mut outpath, "/tmp/kt_mp_out_XXXXXX", 22)
-    let ofd = mkstemp(&mut outpath)
+    let outpath = malloc(32)
+    memcpy(outpath, "/tmp/kt_mp_out_XXXXXX", 22)
+    outpath[22] = 0
+    let ofd = mkstemp(outpath)
     close(ofd)
 
-    let mut cmd: [u8; 2048]
-    snprintf(&mut cmd, 2048,
+    let cmd = malloc(2048)
+    snprintf(cmd, 2048,
         "curl -s -X POST https://api.anthropic.com/v1/messages -H 'Content-Type: application/json' -H 'x-api-key: %s' -H 'anthropic-version: 2023-06-01' --data-binary @%s -o %s",
-        api_key, &tmppath, &outpath)
+        api_key, tmppath, outpath)
 
-    let rc = system(&cmd)
-    unlink(&tmppath)
+    let rc = system(cmd)
+    free(cmd)
+    unlink(tmppath)
+    free(tmppath)
     if rc != 0 { error_at(loc, "@microparse: curl failed") }
 
-    let resp = read_file_or_null(&outpath)
-    unlink(&outpath)
+    let resp = read_file_or_null(outpath)
+    unlink(outpath)
+    free(outpath)
     if resp == 0 { error_at(loc, "@microparse: failed to read curl output") }
 
-    // Extract "text": value from JSON response
     let text_key = strstr(resp, "\"text\":")
     if text_key == 0 { error_at(loc, "@microparse: failed to parse API response") }
-    let start = strchr(text_key + 7, 34)  // find opening "
+    let start = strchr(text_key + 7, 34)
     if start == 0 { error_at(loc, "@microparse: malformed API response") }
-    let start = start + 1
+    let start2 = start + 1
 
     let result = malloc(strlen(resp) + 1)
     let mut len: u64 = 0
-    let mut p = start
+    let mut p = start2
     while p[0] != 0 && !(p[0] == 34 && p[-1] != 92) {
         if p[0] == 92 && p[1] != 0 {
             p = p + 1
-            match p[0] {
-                110 => { result[len] = 10; len = len + 1 }
-                116 => { result[len] = 9; len = len + 1 }
-                92  => { result[len] = 92; len = len + 1 }
-                34  => { result[len] = 34; len = len + 1 }
-            }
+            if p[0] == 110 { result[len] = 10; len = len + 1 }
+            else if p[0] == 116 { result[len] = 9; len = len + 1 }
+            else if p[0] == 92 { result[len] = 92; len = len + 1 }
+            else if p[0] == 34 { result[len] = 34; len = len + 1 }
+            else { result[len] = p[0]; len = len + 1 }
         } else {
             result[len] = p[0]
             len = len + 1
@@ -176,7 +181,7 @@ fn splice_body(arena: &mut Arena, f: *AstNode, source: &str, file: &str) {
             tok = lexer_next(l)
             if tok.kind == TokenKind::LPAREN {
                 let call = ast_new(arena, NodeKind::CALL, name.loc)
-                call.d0 = arena_strndup(arena, name.text, name.len)  // call.name
+                call.d0 = arena_strndup(arena, name.text, name.len)
                 let mut acap: i32 = 4
                 let mut nargs: i32 = 0
                 let mut args = arena_alloc(arena, acap * 8, 8)
@@ -185,22 +190,22 @@ fn splice_body(arena: &mut Arena, f: *AstNode, source: &str, file: &str) {
                     if tok.kind == TokenKind::COMMA { tok = lexer_next(l); continue }
                     if tok.kind == TokenKind::STRING {
                         let s = ast_new(arena, NodeKind::STRING_LIT, tok.loc)
-                        s.d0 = arena_strndup(arena, tok.text, tok.len)  // string_lit.value
+                        s.d0 = arena_strndup(arena, tok.text, tok.len)
                         args[[nargs]] = s
                         nargs = nargs + 1
                     } else if tok.kind == TokenKind::INT {
                         let n = ast_new(arena, NodeKind::INT_LIT, tok.loc)
-                        n.d1 = arena_strndup(arena, tok.text, tok.len)  // int_lit.text
-                        n.d0 = strtol(n.d1)  // int_lit.value
+                        n.d1 = arena_strndup(arena, tok.text, tok.len)
+                        n.d0 = kt_strtol(n.d1)
                         args[[nargs]] = n
                         nargs = nargs + 1
                     }
                     tok = lexer_next(l)
                 }
-                call.d1 = args   // call.args
-                call.d2 = nargs  // call.nargs
+                call.d1 = args
+                call.d2 = nargs
                 let stmt = ast_new(arena, NodeKind::EXPR_STMT, call.loc)
-                stmt.d0 = call  // expr_stmt.expr
+                stmt.d0 = call
                 stmts[[nstmts]] = stmt
                 nstmts = nstmts + 1
                 tok = lexer_next(l)
@@ -210,30 +215,26 @@ fn splice_body(arena: &mut Arena, f: *AstNode, source: &str, file: &str) {
         tok = lexer_next(l)
     }
 
-    // f.d1 = fn_def.body (BLOCK node)
-    // body.d0 = block.stmts, body.d1 = block.nstmts
-    let body = f.d1
+    let body: *AstNode = f.d1
     body.d0 = stmts
     body.d1 = nstmts
 }
 
 fn microparse_process(arena: &mut Arena, program: *AstNode, source_path: &str, force_refresh: i32, skip: i32) {
     let mut i: i32 = 0
-    while i < program.d1 {  // program.ndecls
-        let decl = program.d0[[i]]  // program.decls
+    while i < program.d1 {
+        let decl: *AstNode = program.d0[[i]]
         if decl.kind != NodeKind::ANNOTATION { i = i + 1; continue }
-        if !streq(decl.d0, "microparse") { i = i + 1; continue }  // annotation.name
+        if !streq(decl.d0, "microparse") { i = i + 1; continue }
 
-        let f = decl.d2  // annotation.child
+        let f: *AstNode = decl.d2
         if f == 0 || f.kind != NodeKind::FN_DEF { i = i + 1; continue }
 
-        // Skip non-empty bodies unless refreshing
-        // f.d1 = fn_def.body (BLOCK node), body.d1 = block.nstmts
-        let body = f.d1
+        let body: *AstNode = f.d1
         if body.d1 > 0 && force_refresh == 0 { i = i + 1; continue }
 
         let sig = extract_fn_signature(f)
-        let hash = make_hash(decl.d1, sig)  // annotation.prompt
+        let hash = make_hash(decl.d1, sig)
 
         if force_refresh == 0 {
             let cached = cache_lookup(source_path, hash)
@@ -256,7 +257,7 @@ fn microparse_process(arena: &mut Arena, program: *AstNode, source_path: &str, f
             error_at(decl.loc, "@microparse requires ANTHROPIC_API_KEY environment variable")
         }
 
-        let generated = call_claude_api(api_key, decl.d1, sig, decl.loc)  // annotation.prompt
+        let generated = call_claude_api(api_key, decl.d1, sig, decl.loc)
         splice_body(arena, f, generated, source_path)
         cache_write(source_path, hash, generated)
         free(generated)

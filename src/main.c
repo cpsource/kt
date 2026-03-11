@@ -45,7 +45,8 @@ static char *preprocess(const char *src, const char *filepath) {
 
     while (*p) {
         /* Check for #include at start of line */
-        if (*p == '#' && strncmp(p, "#include", 8) == 0) {
+        if (*p == '#' && strncmp(p, "#include", 8) == 0 &&
+            (p == src || *(p-1) == '\n')) {
             p += 8;
             while (*p == ' ' || *p == '\t') p++;
             char delim_end = 0;

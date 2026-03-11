@@ -8,39 +8,56 @@ fn collect_locals(block: *AstNode) {
     if block == 0 { return }
     if block.kind != NodeKind::BLOCK { return }
     let mut i: i32 = 0
-    while i < block.d1 {  // block.nstmts
-        let stmt = block.d0[[i]]  // block.stmts
+    while i < block.d1 {
+        let stmt: *AstNode = block.d0[[i]]
         if stmt.kind == NodeKind::LET {
-            if check_nlocals < 64 {
-                check_locals[[check_nlocals]] = stmt.d0  // let.name
-                check_nlocals = check_nlocals + 1
+            // Read extra: [is_mut, is_buffer, type_name]
+            let extra_ptr = stmt + 40
+            let is_buffer: i32 = extra_ptr[[1]]
+            if is_buffer {
+                if check_nlocals < 64 {
+                    check_locals[[check_nlocals]] = stmt.d0
+                    check_nlocals = check_nlocals + 1
+                }
             }
         }
         i = i + 1
     }
 }
 
-fn is_local(name: &str) -> bool {
+fn is_local(name: &str) -> i32 {
     let mut i: i32 = 0
     while i < check_nlocals {
         if streq(check_locals[[i]], name) {
-            return true
+            return 1
         }
         i = i + 1
     }
-    return false
+    return 0
 }
 
 fn check_return_expr(expr: *AstNode, ret_loc: SrcLoc) {
     if expr == 0 { return }
-    if expr.kind == 23 && is_local(expr.d0) {  // IDENT, ident.name
-        error_at(ret_loc,
-            "returning pointer to stack-allocated variable — memory will be invalid after function returns")
+    if expr.kind == NodeKind::IDENT && is_local(expr.d0) {
+        error_at(ret_loc, "returning pointer to stack-allocated variable")
+    }
+}
+
+fn check_block(block: *AstNode) {
+    if block == 0 { return }
+    if block.kind != NodeKind::BLOCK { return }
+    let mut i: i32 = 0
+    while i < block.d1 {
+        let stmt: *AstNode = block.d0[[i]]
+        if stmt.kind == NodeKind::RETURN {
+            check_return_expr(stmt.d0, stmt.loc)
+        }
+        i = i + 1
     }
 }
 
 fn check_fn(f: *AstNode) {
-    let body = f.d1  // fn_def.body
+    let body: *AstNode = f.d1
     if body == 0 { return }
     if body.kind != NodeKind::BLOCK { return }
 
@@ -48,25 +65,18 @@ fn check_fn(f: *AstNode) {
     collect_locals(body)
     if check_nlocals == 0 { return }
 
-    let mut i: i32 = 0
-    while i < body.d1 {  // block.nstmts
-        let stmt = body.d0[[i]]  // block.stmts
-        if stmt.kind == 6 {  // RETURN
-            check_return_expr(stmt.d0, stmt.loc)  // return.expr
-        }
-        i = i + 1
-    }
+    check_block(body)
 }
 
 fn check_escape(program: *AstNode) {
     let mut i: i32 = 0
-    while i < program.d1 {  // program.ndecls
-        let decl = program.d0[[i]]  // program.decls
-        if decl.kind == 1 {  // FN_DEF
+    while i < program.d1 {
+        let decl: *AstNode = program.d0[[i]]
+        if decl.kind == NodeKind::FN_DEF {
             check_fn(decl)
-        } else if decl.kind == 27 {  // ANNOTATION
-            let child = decl.d2  // annotation.child
-            if child != 0 && child.kind == 1 {  // FN_DEF
+        } else if decl.kind == NodeKind::ANNOTATION {
+            let child: *AstNode = decl.d2
+            if child != 0 && child.kind == NodeKind::FN_DEF {
                 check_fn(child)
             }
         }

@@ -9,6 +9,8 @@
 
 #include <string.h>
 #include <ctype.h>
+#include <stdlib.h>
+#include <stdio.h>
 
 /* ---- String / character helpers ---- */
 
@@ -33,6 +35,17 @@ long starts_with(const char *s, const char *prefix) {
     if (!s || !prefix) return 0;
     return strncmp(s, prefix, strlen(prefix)) == 0;
 }
+
+/* kt_strtol: 1-arg wrapper for strtol, base 10 */
+long kt_strtol(const char *s) {
+    return strtol(s, NULL, 10);
+}
+
+/* strtol_base: 2-arg wrapper for strtol with explicit base */
+long strtol_base(const char *s, long base) {
+    return strtol(s, NULL, (int)base);
+}
+
 
 /* ---- Program arguments ---- */
 /* These are set by _start → __libc_start_main → main(argc, argv).
@@ -63,6 +76,7 @@ __asm__(
 
 /* check.kt: let mut check_locals: [&str; 64] */
 const char *check_locals[64];
+
 
 /* codegen.kt: arg_regs (no longer needed since we use get_arg_reg(), but keep for link) */
 const char *arg_regs[6] = { "%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9" };

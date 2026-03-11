@@ -29,7 +29,7 @@ static void check_return_expr(AstNode *expr, SrcLoc ret_loc) {
     if (!expr) return;
     if (expr->kind == NODE_IDENT && is_local(expr->ident.name)) {
         error_at(ret_loc,
-            "returning pointer to stack-allocated '%s' — "
+            "returning pointer to stack-allocated '%s' -- "
             "memory will be invalid after function returns",
             expr->ident.name);
     }
