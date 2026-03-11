@@ -2,7 +2,11 @@
 
 ## Overview
 
-kt is a systems programming language targeting x86-64/AMD64 machines. It prioritizes safety, clarity, and direct hardware access. Programs compile to statically-linked ELF binaries via musl libc.
+kt is a systems programming language targeting x86-64/AMD64 machines. Programs compile to statically-linked ELF binaries via musl libc. The compiler is self-hosting: `ktc` (written in C) compiles `kt-src/*.kt` to produce `ktc-kt`.
+
+## Implementation Notes
+
+All values are 8 bytes at runtime (pointers, integers, booleans). Structs are heap-allocated via `malloc`, with each field occupying 8 bytes. There is no garbage collector; memory is managed manually or via arenas. Logical operators `&&` and `||` evaluate both sides (no short-circuit evaluation). Pointer arithmetic `p + 1` adds 1 byte, not `sizeof(*p)`.
 
 ## Lexical Elements
 
@@ -10,9 +14,9 @@ kt is a systems programming language targeting x86-64/AMD64 machines. It priorit
 ```
 fn      let     mut     return
 if      else    match   for
-while   break   continue
+in      while   break   continue
 struct  enum    impl    type
-true    false   none    some
+true    false
 ```
 
 ### Identifiers
@@ -29,7 +33,6 @@ foo  _bar  my_var  Point2D
 0xFF        // hexadecimal
 0b1010      // binary
 0o77        // octal
-1_000_000   // underscores for readability
 ```
 
 **String literals:**
@@ -48,19 +51,21 @@ false
 ```
 +  -  *  /  %          // arithmetic
 == != < > <= >=        // comparison
-&& || !                // logical
+&& || !                // logical (non-short-circuit)
 & | ^ ~ << >>         // bitwise
 =                      // assignment
 ->                     // return type annotation
+=>                     // match arm
+..                     // range
 ```
 
 ### Punctuation
 ```
-( )  { }  [ ]          // grouping
-,    :    ;             // separators
+( )  { }  [ ]  [[ ]]  // grouping / indexing
+,    :                  // separators (semicolons are ignored)
 @                       // annotations
 .                       // member access
-::                      // path separator
+::                      // path separator (Enum::Variant)
 ```
 
 ### Comments
@@ -74,271 +79,338 @@ false
 ## Types
 
 ### Primitive Types
-| Type | Size | Description |
-|------|------|-------------|
-| `i8`, `i16`, `i32`, `i64` | 1-8 bytes | Signed integers |
-| `u8`, `u16`, `u32`, `u64` | 1-8 bytes | Unsigned integers |
-| `f32`, `f64` | 4-8 bytes | IEEE 754 floating point |
-| `bool` | 1 byte | `true` or `false` |
-| `str` | pointer+length | UTF-8 string slice |
-| `void` | 0 bytes | No value |
+| Type | Description |
+|------|-------------|
+| `i32` | Signed 32-bit integer (stored as 8 bytes at runtime) |
+| `u8` | Unsigned byte |
+| `u64` | Unsigned 64-bit integer |
+| `bool` | `true` or `false` (8 bytes at runtime) |
+| `&str` | Pointer to null-terminated string |
 
 ### Pointer Types
 ```
-*T          // raw pointer to T (unsafe)
+*T          // raw pointer to T
 &T          // immutable reference to T
 &mut T      // mutable reference to T
 ```
 
 ### Array Types
 ```
-[T; N]      // fixed-size array of N elements of type T
-[T]         // slice (pointer + length)
+[T; N]      // fixed-size array type annotation (used in globals)
 ```
 
-### Option Type
-No null pointers. Use `Option` for values that may be absent:
+### Buffer Declarations
 ```
-Option<T>   // either some(value) or none
+let buf = [1024]        // allocate 1024 bytes on the stack
 ```
-
-### SIMD Types (first-class)
-```
-v128i8      // 16 x i8  (128-bit)
-v256f32     // 8 x f32  (256-bit AVX)
-v512f64     // 8 x f64  (512-bit AVX-512)
-```
-Lane accesses are bounds-checked.
-
-## Type System
-
-### Strong static typing with inference
-```
-let x = 42              // inferred as i32
-let y: f64 = 3.14       // explicit annotation
-let z = x + 1           // inferred from x
-```
-
-### No implicit coercions
-```
-let a: i32 = 10
-let b: f64 = a           // COMPILE ERROR: no implicit i32 -> f64
-let b: f64 = a.to_f64()  // OK: explicit conversion
-```
-
-### Algebraic Data Types
-```
-enum Shape {
-    Circle(f64),                    // radius
-    Rectangle(f64, f64),            // width, height
-    Triangle(f64, f64, f64),        // three sides
-}
-```
-
-### Tagged Unions (no raw C unions)
-All enums are tagged. The compiler tracks which variant is active.
 
 ## Variables and Mutability
 
 ### Immutable by default
 ```
 let x = 5
-x = 10                  // COMPILE ERROR: x is immutable
+x = 10                  // ERROR: x is immutable
 
 let mut y = 5
 y = 10                  // OK: y is mutable
 ```
 
-### No uninitialized variables
+### Optional type annotations
 ```
-let x: i32              // COMPILE ERROR: must initialize
-let x: i32 = 0          // OK
+let x = 42              // type inferred
+let mut y: i32 = 0      // explicit type
+let mut p: &str = 0     // null pointer
 ```
 
-### No implicit global state
-All state must be passed explicitly through function parameters.
+### Top-level globals
+```
+let MAX_SIZE: i32 = 128
+let mut count: i32 = 0
+let mut table: [&str; 64]   // global array
+```
 
 ## Functions
 
 ```
 fn add(a: i32, b: i32) -> i32 {
-    a + b               // last expression is the return value
+    return a + b
 }
 
-fn greet(name: str) {
-    puts("Hello, ")
+fn greet(name: &str) {
     puts(name)
 }
 ```
 
-### All return paths must be handled
-```
-fn abs(x: i32) -> i32 {
-    if x >= 0 { x }
-    // COMPILE ERROR: missing else branch
-}
+The last expression in a function body is used as the implicit return value. Up to 6 arguments are passed in registers (System V AMD64 ABI: `%rdi`, `%rsi`, `%rdx`, `%rcx`, `%r8`, `%r9`); additional arguments go on the stack.
 
-fn abs(x: i32) -> i32 {
-    if x >= 0 { x }
-    else { -x }         // OK: all paths return i32
-}
+### Parameters
 ```
-
-### Unreachable code is a compile error
+fn foo(x: i32, s: &str, p: *AstNode, a: &mut Arena) { }
 ```
-fn foo() -> i32 {
-    return 5
-    let x = 10          // COMPILE ERROR: unreachable code
-}
-```
+Parameter types can be plain types, references (`&T`, `&mut T`), or pointers (`*T`).
 
 ## Control Flow
 
 ### if/else (expression-based)
 ```
-let x = if condition { 1 } else { 2 }
-```
-
-### match (exhaustive pattern matching)
-```
-match shape {
-    Circle(r) => 3.14159 * r * r,
-    Rectangle(w, h) => w * h,
-    Triangle(a, b, c) => {
-        let s = (a + b + c) / 2.0
-        (s * (s-a) * (s-b) * (s-c)).sqrt()
-    }
+if condition {
+    // then
+} else {
+    // else
 }
-// No fallthrough. Every variant must be handled or the compiler errors.
+
+// As expression:
+let x = if a > b { a } else { b }
+
+// Chained:
+if x == 0 {
+    // ...
+} else if x == 1 {
+    // ...
+} else {
+    // ...
+}
 ```
 
-### Loops
+### while loops
 ```
 while condition {
     // body
+    if done { break }
+    if skip { continue }
 }
+```
 
+### for-range loops
+```
 for i in 0..10 {
     // i goes from 0 to 9
 }
 ```
 
-## Integer Arithmetic
-
-### Checked by default
+### match
 ```
-let x: i32 = 2_147_483_647
-let y = x + 1            // RUNTIME ERROR: integer overflow
-```
-
-### Explicit arithmetic modes
-```
-let a = x +% 1           // wrapping: silently wraps on overflow
-let b = x +| 1           // saturating: clamps to max value
-let c = x +? 1           // checked: returns Option<i32>
-```
-
-### Division by zero
-```
-let x = 10 / 0           // RUNTIME ERROR: division by zero (not a crash)
-```
-
-## Memory Safety
-
-### Bounds checking
-```
-let arr = [1, 2, 3]
-let x = arr[5]           // RUNTIME ERROR: index out of bounds
-```
-
-### Region/arena-based memory management
-```
-region r {
-    let data = r.alloc(1024)    // allocated in region r
-    // use data...
-}   // entire region freed here, deterministically
-```
-
-### Ownership (for concurrency safety)
-```
-let data = Vec::new()
-send(data, other_thread)
-data.push(1)             // COMPILE ERROR: data has been moved
-```
-
-## Concurrency
-
-### No shared mutable state without synchronization
-```
-let mut shared = 0
-spawn {
-    shared += 1          // COMPILE ERROR: shared mutable access across threads
-}
-
-let shared = Mutex::new(0)
-spawn {
-    let mut guard = shared.lock()
-    *guard += 1          // OK: protected by mutex
+match value {
+    0 => { handle_zero() }
+    1 => { handle_one() }
+    TokenKind::EOF => { handle_eof() }
 }
 ```
+Match arms use `=>` and can be blocks or single expressions. Patterns can be integer literals, identifiers, or qualified paths (`Enum::Variant`).
+
+### break and continue
+`break` exits the innermost loop. `continue` jumps to the next iteration.
+
+## Structs
+
+### Definition
+```
+struct Point {
+    x: i32,
+    y: i32,
+}
+```
+All struct fields are 8 bytes. Field offset = field index * 8.
+
+### Struct literals
+```
+let p = Point { x: 10, y: 20 }
+```
+Struct literals allocate on the heap via `malloc`. The result is a pointer to the struct.
+
+### Field access
+```
+let x = p.x
+p.y = 30
+```
+
+### Nested access
+```
+let name = node.loc.file
+```
+
+## Enums
+
+### Definition
+```
+enum Color {
+    RED,
+    GREEN,
+    BLUE,
+}
+```
+Variants are assigned sequential integer values starting from 0.
+
+### Qualified paths
+```
+let c = Color::RED      // value 0
+let k = TokenKind::EOF  // value 56
+```
+
+When referencing enum variants across compilation units, the compiler emits `movq EnumName__Variant(%rip), %rax`, and the runtime provides these as global constants.
+
+## Indexing
+
+### Byte indexing `[ ]`
+```
+let c = str[i]          // load 1 byte (zero-extended to 8 bytes)
+str[i] = 0              // store 1 byte
+```
+
+### Word indexing `[[ ]]`
+```
+let item = arr[[i]]     // load 8 bytes (pointer/integer array access)
+arr[[i]] = value        // store 8 bytes
+```
+
+## Expressions
+
+### Binary operators (by precedence, lowest to highest)
+| Precedence | Operators |
+|-----------|-----------|
+| 2 | `\|\|` |
+| 3 | `&&` |
+| 4 | `\|` |
+| 5 | `^` |
+| 6 | `&` |
+| 7 | `== !=` |
+| 8 | `< > <= >=` |
+| 9 | `<< >>` |
+| 10 | `+ -` |
+| 11 | `* / %` |
+
+All binary operators are left-associative.
+
+### Unary operators
+```
+-x          // negate
+!x          // logical not
+~x          // bitwise not
+*p          // dereference
+&x          // address of
+&mut x      // mutable address of
+```
+
+### Parenthesized expressions
+```
+let x = (a + b) * c
+```
+
+### Function calls
+```
+puts("hello")
+fprintf(stderr, "%s:%ld\n", file, line)
+let p = malloc(size)
+```
+
+### Assignment
+```
+x = 10
+arr[[i]] = value
+node.field = expr
+```
+
+## Preprocessor
+
+The compiler supports `#include` directives:
+```
+#include "types.kth"
+```
+Includes are resolved relative to the directory of the including file and expanded inline before parsing. Recursive includes are supported.
 
 ## Annotations
 
 ### @microparse -- AI-assisted code generation
 ```
 @microparse("handle positive, zero, and negative cases")
-fn classify(x: i32) -> str { }
+fn classify(x: i32) -> &str { }
 ```
-At compile time, the compiler sends the prompt and function signature to Claude API. The AI-generated function body is spliced into the AST and compiled normally. Results are cached in `.kt.gen` files.
+At compile time, the compiler sends the prompt and function signature to the Claude API. The generated function body is spliced into the AST and compiled normally. Results are cached in `.gen` files keyed by a hash of the prompt and signature.
 
-## Structs and Methods
+Compiler flags:
+- `--skip-microparse` -- use cached results only, error if no cache exists
+- `--microparse-refresh` -- force re-generation, ignore cache
 
+Requires `ANTHROPIC_API_KEY` environment variable.
+
+## Static Analysis
+
+### Escape analysis
+The compiler warns when a function returns a pointer to a stack-allocated buffer:
 ```
-struct Point {
-    x: f64,
-    y: f64,
-}
-
-impl Point {
-    fn new(x: f64, y: f64) -> Point {
-        Point { x: x, y: y }
-    }
-
-    fn distance(self, other: Point) -> f64 {
-        let dx = self.x - other.x
-        let dy = self.y - other.y
-        (dx*dx + dy*dy).sqrt()
-    }
+fn bad() -> &str {
+    let buf = [64]
+    return buf              // ERROR: returning pointer to stack-allocated variable
 }
 ```
-
-## Stack Overflow Detection
-
-Guard pages are placed at the end of each thread's stack. Accessing beyond the stack limit triggers a fault that is caught and reported as a clear error, not a silent corruption.
 
 ## Compiler Diagnostics
 
-- All warnings are errors by default
 - Error format: `file:line:col: error: message`
-- Exhaustiveness checking on match expressions
-- Unreachable code detection
-- Unused variable warnings
+- All errors are fatal (compilation stops at first error)
 
-## Grammar (Milestone 1 -- minimal)
+## Grammar
 
 ```
-program    = (annotation? fn_def)*
-annotation = "@" IDENT "(" STRING ")"
-fn_def     = "fn" IDENT "(" params? ")" ("->" type)? block
-params     = param ("," param)*
-param      = IDENT ":" type
-type       = IDENT
-block      = "{" stmt* "}"
-stmt       = expr_stmt | let_stmt | return_stmt
-let_stmt   = "let" "mut"? IDENT (":" type)? "=" expr
-return_stmt = "return" expr?
-expr_stmt  = expr
-expr       = call_expr | IDENT | STRING | INT | BOOL
-call_expr  = IDENT "(" args? ")"
-args       = expr ("," expr)*
+program     = decl*
+decl        = annotation fn_def
+            | fn_def
+            | struct_def
+            | enum_def
+            | let_decl
+
+annotation  = "@" IDENT "(" STRING ")"
+fn_def      = "fn" IDENT "(" params? ")" ("->" type)? block
+params      = param ("," param)*
+param       = IDENT ":" type
+struct_def  = "struct" IDENT "{" (field ",")* "}"
+field       = IDENT ":" type
+enum_def    = "enum" IDENT "{" (IDENT ","?)* "}"
+let_decl    = "let" "mut"? IDENT (":" type)? ("=" (expr | "[" INT "]"))?
+
+type        = IDENT
+            | "&" type
+            | "&" "mut" type
+            | "*" type
+            | "[" type ";" INT "]"
+
+block       = "{" stmt* "}"
+stmt        = "return" expr?
+            | "let" "mut"? IDENT (":" type)? ("=" (expr | "[" INT "]"))?
+            | "while" expr block
+            | "for" IDENT "in" expr ".." expr block
+            | "match" expr "{" match_arm* "}"
+            | "if" expr block ("else" (if_expr | block))?
+            | "break"
+            | "continue"
+            | expr ("=" expr)?            // expr_stmt or assignment
+
+match_arm   = pattern "=>" (block | expr) ","?
+pattern     = IDENT ("::" IDENT)?
+            | INT
+
+expr        = expr_bp(0)                 // Pratt parser, min binding power 0
+primary     = "-" expr                   // unary negate
+            | "!" expr                   // logical not
+            | "~" expr                   // bitwise not
+            | "*" expr                   // dereference
+            | "&" "mut"? expr            // address of
+            | "(" expr ")"              // grouping
+            | "if" expr block ("else" (if_expr | block))?
+            | block                      // block expression
+            | STRING
+            | INT
+            | "true" | "false"
+            | IDENT "::" IDENT           // path (Enum::Variant)
+            | IDENT "(" args? ")"        // call
+            | IDENT "{" field_init* "}"  // struct literal
+            | IDENT                      // variable
+
+postfix     = expr "." IDENT            // member access
+            | expr "." IDENT "(" args? ")"  // method call
+            | expr "[" expr "]"          // byte index
+            | expr "[[" expr "]]"        // word index
+
+args        = expr ("," expr)*
+field_init  = IDENT ":" expr ","?
 ```
