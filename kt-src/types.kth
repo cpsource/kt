@@ -136,19 +136,19 @@ enum NodeKind {
     ANNOTATION,  // 27
 }
 
-// AstNode — flat union layout (d0/d1/d2 are variant data):
+// AstNode — flat union layout (d0..d4 are variant data):
 //   PROGRAM:    d0=decls       d1=ndecls
-//   FN_DEF:     d0=name        d1=body
+//   FN_DEF:     d0=name        d1=body        d2=params     d3=nparams  d4=ret_type
 //   STRUCT_DEF: d0=name        d1=fields      d2=nfields
 //   ENUM_DEF:   d0=name        d1=variants    d2=nvariants
 //   BLOCK:      d0=stmts       d1=nstmts
 //   EXPR_STMT:  d0=expr
 //   RETURN:     d0=expr
-//   LET:        d0=name        d1=init        d2=size (for buffers)
+//   LET:        d0=name        d1=init        d2=size        d3=is_mut  d4=type_name
 //   ASSIGN:     d0=target      d1=value
 //   IF:         d0=cond        d1=then_b      d2=else_b
 //   WHILE:      d0=cond        d1=body
-//   FOR_RANGE:  d0=var         d1=start       d2=end (body via extra)
+//   FOR_RANGE:  d0=var         d1=start       d2=end         d3=body
 //   MATCH:      d0=expr        d1=arms        d2=narms
 //   BREAK:      (no data)
 //   CONTINUE:   (no data)
@@ -162,7 +162,7 @@ enum NodeKind {
 //   BOOL_LIT:   d0=value
 //   IDENT:      d0=name
 //   PATH:       d0=base        d1=member
-//   STRUCT_LIT: d0=name        d1=field_names d2=field_values (nfields via extra)
+//   STRUCT_LIT: d0=name        d1=field_names d2=field_values d3=nfields
 //   ADDR_OF:    d0=operand     d1=is_mut
 //   ANNOTATION: d0=name        d1=prompt      d2=child
 struct AstNode {
@@ -171,6 +171,8 @@ struct AstNode {
     d0: u64,
     d1: u64,
     d2: u64,
+    d3: u64,
+    d4: u64,
 }
 
 struct CodegenCtx {

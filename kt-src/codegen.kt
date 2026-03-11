@@ -568,11 +568,8 @@ fn emit_expr(ctx: *u8, node: *AstNode) {
     }
 
     if node.kind == NodeKind::STRUCT_LIT {
-        // d0=name, d1=field_names, d2=field_values
-        // nfields is stored in the word right after d2 in memory
-        // Access: the "extra" word at node + 40
-        let nfields_ptr = node + 40
-        let nfields: i32 = nfields_ptr[[0]]
+        // d0=name, d1=field_names, d2=field_values, d3=nfields
+        let nfields: i32 = node.d3
         let fvals = node.d2
         let size = nfields * 8
         fprintf(out, "    movq    $%d, %%rdi\n", size)
@@ -753,7 +750,7 @@ fn emit_stmt(ctx: *u8, stmt: *AstNode) {
     }
 
     if stmt.kind == NodeKind::FOR_RANGE {
-        // d0=var, d1=start, d2=end, body via extra (at stmt+40)
+        // d0=var, d1=start, d2=end, d3=body
         let var_name: &str = stmt.d0
         let idx = find_local(ctx, var_name)
         if idx < 0 { return }
@@ -775,9 +772,7 @@ fn emit_stmt(ctx: *u8, stmt: *AstNode) {
         fprintf(out, "    cmpq    %%rcx, %%rax\n")
         fprintf(out, "    jge     .L%d\n", lend)
 
-        // body is stored at extra (stmt + 40)
-        let extra_ptr = stmt + 40
-        let body: *AstNode = extra_ptr[[0]]
+        let body: *AstNode = stmt.d3
         if body.kind == NodeKind::BLOCK {
             let mut i: i32 = 0
             while i < body.d1 {
@@ -900,10 +895,10 @@ fn scan_locals(ctx: *u8, block: *AstNode) {
     while i < nstmts {
         let stmt: *AstNode = block.d0[[i]]
         if stmt.kind == NodeKind::LET {
-            // Read extra data: [is_mut, is_buffer, type_name] at stmt+40
-            let extra_ptr = stmt + 40
-            let is_buffer: i32 = extra_ptr[[1]]
-            let type_name: &str = extra_ptr[[2]]
+            // d2 > 0 means buffer with that size, d4 = type_name
+            let mut is_buffer: i32 = 0
+            if stmt.d2 > 0 { is_buffer = 1 }
+            let type_name: &str = stmt.d4
             if is_buffer {
                 add_local(ctx, stmt.d0, 1, stmt.d2, type_name)
             } else {
@@ -912,8 +907,7 @@ fn scan_locals(ctx: *u8, block: *AstNode) {
         }
         if stmt.kind == NodeKind::FOR_RANGE {
             add_local(ctx, stmt.d0, 0, 0, 0)
-            let extra_ptr = stmt + 40
-            let body: *AstNode = extra_ptr[[0]]
+            let body: *AstNode = stmt.d3
             scan_locals(ctx, body)
         }
         if stmt.kind == NodeKind::IF {
@@ -950,10 +944,9 @@ fn emit_fn(ctx: *u8, f: *AstNode) {
     let name: &str = f.d0
     let body: *AstNode = f.d1
 
-    // Read fn extra data: [params, nparams, ret_type] at f+40
-    let fn_extra = f + 40
-    let params = fn_extra[[0]]
-    let nparams: i32 = fn_extra[[1]]
+    // FN_DEF: d0=name, d1=body, d2=params, d3=nparams, d4=ret_type
+    let params = f.d2
+    let nparams: i32 = f.d3
 
     // Allocate stack slots for parameters
     let mut i: i32 = 0
@@ -1078,10 +1071,9 @@ fn codegen(program: *AstNode, out: *u8) {
     while i < ndecls {
         let d: *AstNode = decls[[i]]
         if d.kind == NodeKind::LET {
-            // Read extra: [is_mut, is_buffer, type_name]
-            let extra_ptr = d + 40
-            let is_buffer: i32 = extra_ptr[[1]]
-            let type_name: &str = extra_ptr[[2]]
+            let mut is_buffer: i32 = 0
+            if d.d2 > 0 { is_buffer = 1 }
+            let type_name: &str = d.d4
             let mut is_arr: i32 = is_buffer
             if type_name != 0 && type_name[0] == 91 { is_arr = 1 }  // '['
             register_global(ctx, d.d0, is_arr)

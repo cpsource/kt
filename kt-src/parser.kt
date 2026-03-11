@@ -419,56 +419,7 @@ fn parse_primary(p: &mut Parser) -> *AstNode {
                     expect(p, TokenKind::RBRACE, "'}'")
                     n.d1 = fnames
                     n.d2 = fvals
-                    // Store nfields via the extra field hack — we use a separate approach:
-                    // For STRUCT_LIT, nfields is stored after field_values in memory
-                    // Actually, AstNode only has d0/d1/d2. We need another way.
-                    // Convention: store nfields as the low 32 bits of an extra arena alloc
-                    // pointed to by... No. Let's use the "extra" approach from types.kth.
-                    // The C code stores nfields separately in struct_lit.nfields.
-                    // In the flat layout, STRUCT_LIT uses: d0=name, d1=field_names, d2=field_values
-                    // We need nfields somewhere. Let's pack it: store nfields in the padding
-                    // after the AstNode. We allocate 48 bytes and put nfields at offset 40.
-                    // Actually, ast_new allocates 40 bytes. Let's just store nfields
-                    // at a known location. We'll use a word right after AstNode.
-                    // Simplest: allocate 48 bytes for struct_lit nodes.
-                    // But ast_new always allocates 40. Let's store nfields in a separate alloc
-                    // and put it just after d2 by encoding it into the pointer...
-                    //
-                    // SIMPLEST APPROACH: Pack nfields into the high bits of d2 or use
-                    // an arena word. Since field_values is a pointer, put nfields
-                    // at fvals[-1] (word before the array). No, that's fragile.
-                    //
-                    // Looking at how codegen.c reads it: node->struct_lit.nfields
-                    // In the flat AstNode, struct_lit maps to:
-                    //   d0 = name, d1 = field_names, d2 = field_values
-                    // nfields is a 4th field. The C struct has it as part of the union.
-                    // With the flat AstNode at 40 bytes (5 * 8), we have no room.
-                    //
-                    // We need to either: (1) make AstNode 48 bytes, or (2) store nfields
-                    // at a fixed offset from one of the pointers.
-                    //
-                    // Since this problem affects STRUCT_LIT and potentially FOR_RANGE (which
-                    // needs 4 fields: var, start, end, body), the comments in types.kth say:
-                    //   FOR_RANGE: d0=var, d1=start, d2=end (body via extra)
-                    //   STRUCT_LIT: d0=name, d1=field_names, d2=field_values (nfields via extra)
-                    //
-                    // So "extra" means: store extra data right after the AstNode in arena memory.
-                    // We need to allocate 48 bytes instead of 40, and put extra at offset 40.
-                    // But ast_new allocates 40... We can write to offset 40 if we allocate more.
-                    //
-                    // Actually simpler: use fvals[[-1]] trick or put nfields at fvals[[nf]].
-                    // Or: allocate nfields-slot as a separate word and store at n + 40.
-                    // Let's just write nfields at fvals + nf*8 (the slot right after the last value).
-                    // No, that's a buffer overflow if nf==cap.
-                    //
-                    // REAL SOLUTION: Extend the AstNode allocation for nodes that need extra.
-                    // Write nfields into memory at n+40. We need ast_new to allocate 48 for these.
-                    // Let's add an ast_new_extra function, or just manually write it.
-
-                    // Store nfields right after the node. We allocated 40 bytes via ast_new,
-                    // but arena bump is contiguous so we can grab 8 more bytes.
-                    let extra = arena_alloc(p.arena, 8, 8)
-                    extra[[0]] = nf
+                    n.d3 = nf
                     return n
                 }
                 // Not a struct literal — backtrack
@@ -575,16 +526,8 @@ fn parse_block(p: &mut Parser) -> *AstNode {
                 }
             }
 
-            // Store is_mut and type_name via extra arena allocs right after the node
-            // Extra layout for LET: [is_mut: i64, is_buffer: i64, type_name: ptr]
-            let extra = arena_alloc(p.arena, 24, 8)
-            extra[[0]] = is_mut
-            if stmt.d2 > 0 {
-                extra[[1]] = 1  // is_buffer
-            } else {
-                extra[[1]] = 0
-            }
-            extra[[2]] = type_name
+            stmt.d3 = is_mut
+            stmt.d4 = type_name
 
         } else if check(p, TokenKind::WHILE) {
             let wl = p.cur.loc
@@ -605,9 +548,7 @@ fn parse_block(p: &mut Parser) -> *AstNode {
             stmt.d1 = start
             stmt.d2 = end
             let body = parse_block(p)
-            // Store body via extra
-            let extra = arena_alloc(p.arena, 8, 8)
-            extra[[0]] = body
+            stmt.d3 = body
         } else if check(p, TokenKind::MATCH) {
             let ml = p.cur.loc
             next(p)
@@ -788,11 +729,9 @@ fn parse_fn_def(p: &mut Parser) -> *AstNode {
     let f = ast_new(p.arena, NodeKind::FN_DEF, sl)
     f.d0 = arena_strndup(p.arena, name.text, name.len)
     f.d1 = body
-    // Store params, nparams, ret_type via extra
-    let extra = arena_alloc(p.arena, 24, 8)
-    extra[[0]] = params
-    extra[[1]] = nparams
-    extra[[2]] = ret_type
+    f.d2 = params
+    f.d3 = nparams
+    f.d4 = ret_type
     return f
 }
 
@@ -922,10 +861,8 @@ fn parse(l: &mut Lexer, a: &mut Arena) -> *AstNode {
                     decl.d1 = parse_expr(p)
                 }
             }
-            let extra = arena_alloc(a, 24, 8)
-            extra[[0]] = is_mut
-            if decl.d2 > 0 { extra[[1]] = 1 } else { extra[[1]] = 0 }
-            extra[[2]] = type_name
+            decl.d3 = is_mut
+            decl.d4 = type_name
         } else {
             error_at(p.cur.loc, "expected top-level declaration")
         }

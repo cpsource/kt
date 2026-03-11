@@ -11,10 +11,8 @@ fn collect_locals(block: *AstNode) {
     while i < block.d1 {
         let stmt: *AstNode = block.d0[[i]]
         if stmt.kind == NodeKind::LET {
-            // Read extra: [is_mut, is_buffer, type_name]
-            let extra_ptr = stmt + 40
-            let is_buffer: i32 = extra_ptr[[1]]
-            if is_buffer {
+            // d2 > 0 means buffer
+            if stmt.d2 > 0 {
                 if check_nlocals < 64 {
                     check_locals[[check_nlocals]] = stmt.d0
                     check_nlocals = check_nlocals + 1
