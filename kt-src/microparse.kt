@@ -180,7 +180,7 @@ fn splice_body(arena: &mut Arena, f: *AstNode, source: &str, file: &str) {
             let name = tok
             tok = lexer_next(l)
             if tok.kind == TokenKind::LPAREN {
-                let call = ast_new(arena, NodeKind::CALL, name.loc)
+                let call: *AstNode = ast_new(arena, NodeKind::CALL, name.loc)
                 call.d0 = arena_strndup(arena, name.text, name.len)
                 let mut acap: i32 = 4
                 let mut nargs: i32 = 0

@@ -617,7 +617,7 @@ fn parse_block(p: &mut Parser) -> *AstNode {
             next(p)
         } else {
             // Expression statement, possibly followed by = for assignment
-            let expr = parse_expr(p)
+            let expr: *AstNode = parse_expr(p)
             if check(p, TokenKind::EQ) {
                 let al = p.cur.loc
                 next(p)

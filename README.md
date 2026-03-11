@@ -1,16 +1,14 @@
 # kt
 
-A systems programming language for x86-64 that combines low-level control with modern safety guarantees. Compiles to static ELF binaries via musl libc.
+A systems programming language for x86-64. Compiles to static ELF binaries via musl libc. The compiler is self-hosting: `ktc` (written in C) compiles `kt-src/*.kt` to produce `ktc-kt`.
 
-## Goals
+## Features
 
-- **Memory safe** -- bounds checking, no null pointers, region-based memory management
-- **Type safe** -- strong static types with inference, no implicit coercions, algebraic data types with exhaustive pattern matching
-- **Arithmetic safe** -- checked overflow by default, division by zero is a caught error
 - **Immutable by default** -- opt into mutability with `mut`
-- **Concurrency safe** -- no shared mutable state without explicit synchronization
-- **Close to the metal** -- direct x86-64 codegen, SIMD as first-class types, static linking via musl
+- **Close to the metal** -- direct x86-64 codegen, static linking via musl
 - **AI-assisted** -- `@microparse` annotation generates code via Claude API at compile time
+- **Self-hosting** -- the compiler can compile itself
+- **Escape analysis** -- warns when returning pointers to stack-allocated buffers
 
 ## Example
 
@@ -37,11 +35,18 @@ Prerequisites: GCC, GNU make, GNU binutils (as, ld).
 # Build musl libc (one-time)
 make musl
 
-# Build the kt compiler
+# Build the C compiler
 make ktc
 
-# Compile and run the hello world test
+# Build the self-hosted compiler (uses ktc to compile kt-src/*.kt)
+make ktc-kt
+
+# Run all tests with both compilers
 make test
+
+# Run tests with just one compiler
+make test-ktc
+make test-ktc-kt
 ```
 
 ## Usage
@@ -128,32 +133,37 @@ To compile offline (cache only, no API calls):
 
 ```
 kt/
-  src/          # compiler source (C)
+  src/          # compiler source (C) — ktc
+  kt-src/       # compiler source (kt) — ktc-kt (self-hosted)
   tests/        # test .kt programs
   musl/         # musl libc (v1.2.5)
   build/        # build artifacts
+    ktc          # C-built compiler
+    kt-src/
+      ktc-kt     # self-hosted compiler
   Makefile      # build system
 ```
 
 ## Architecture
 
-The compiler is written in C and follows a traditional pipeline:
+The compiler follows a traditional pipeline:
 
 ```
-source.kt --> Lexer --> Parser --> AST --> @microparse pass --> Codegen --> x86-64 assembly
+source.kt --> Preprocessor --> Lexer --> Parser --> AST --> @microparse --> Escape analysis --> Codegen --> x86-64 assembly
 ```
 
+- **Preprocessor** -- expands `#include` directives
 - **Lexer** -- tokenizes kt source
-- **Parser** -- recursive descent, builds AST
+- **Parser** -- Pratt parser (precedence climbing) for expressions, recursive descent for statements
 - **@microparse** -- calls Claude API for annotated functions, splices generated code into AST
+- **Escape analysis** -- warns on returning pointers to stack-allocated buffers
 - **Codegen** -- emits GAS x86-64 assembly (System V AMD64 ABI)
 - **Linking** -- static linking with musl's crt1.o + libc.a produces standalone ELF binaries
 
+Two compiler implementations exist:
+- **ktc** (`src/*.c`) -- the original C implementation
+- **ktc-kt** (`kt-src/*.kt`) -- self-hosted, compiled by ktc
+
 ## Documentation
 
-- [README.plan](README.plan) -- implementation plan and milestones
 - [README-language.md](README-language.md) -- language specification
-
-## Status
-
-Milestone 1: Hello World ELF -- in progress.
