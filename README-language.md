@@ -2,11 +2,11 @@
 
 ## Overview
 
-kt is a systems programming language targeting x86-64/AMD64 machines. Programs compile to statically-linked ELF binaries via musl libc. The compiler is self-hosting: `ktc` (written in C) compiles `kt-src/*.kt` to produce `ktc-kt`.
+kt is a systems programming language targeting x86-64/AMD64 machines. Programs compile to statically-linked ELF binaries via musl libc. The compiler supports two backends: direct x86-64 assembly emission (default) and LLVM IR (`--emit-llvm`). The compiler is self-hosting: `ktc` (written in C) compiles `kt-src/*.kt` to produce `ktc-kt`.
 
 ## Implementation Notes
 
-All values are 8 bytes at runtime (pointers, integers, booleans). Structs are heap-allocated via `malloc`, with each field occupying 8 bytes. There is no garbage collector; memory is managed manually or via arenas. Logical operators `&&` and `||` evaluate both sides (no short-circuit evaluation). Pointer arithmetic `p + 1` adds 1 byte, not `sizeof(*p)`.
+All values are 8 bytes at runtime (pointers, integers, booleans — `i64` in LLVM IR). Structs are heap-allocated via `malloc`, with each field occupying 8 bytes. There is no garbage collector; memory is managed manually or via arenas. Logical operators `&&` and `||` evaluate both sides (no short-circuit evaluation). Pointer arithmetic `p + 1` adds 1 byte, not `sizeof(*p)`.
 
 ## Lexical Elements
 
@@ -141,7 +141,7 @@ fn greet(name: &str) {
 }
 ```
 
-The last expression in a function body is used as the implicit return value. Up to 6 arguments are passed in registers (System V AMD64 ABI: `%rdi`, `%rsi`, `%rdx`, `%rcx`, `%r8`, `%r9`); additional arguments go on the stack.
+The last expression in a function body is used as the implicit return value. With the x86-64 backend, up to 6 arguments are passed in registers (System V AMD64 ABI: `%rdi`, `%rsi`, `%rdx`, `%rcx`, `%r8`, `%r9`); additional arguments go on the stack. With the LLVM backend, LLVM handles ABI details.
 
 ### Parameters
 ```
@@ -247,7 +247,7 @@ let c = Color::RED      // value 0
 let k = TokenKind::EOF  // value 56
 ```
 
-When referencing enum variants across compilation units, the compiler emits `movq EnumName__Variant(%rip), %rax`, and the runtime provides these as global constants.
+When referencing enum variants across compilation units, the compiler emits a load from a global symbol (`EnumName__Variant`), and the runtime provides these as global constants.
 
 ## Indexing
 

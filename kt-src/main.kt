@@ -97,6 +97,7 @@ fn kt_main() {
     let mut output: &str = 0
     let mut mp_refresh: i32 = 0
     let mut mp_skip: i32 = 0
+    let mut emit_llvm: i32 = 0
 
     let mut i: i32 = 1
     while i < argc {
@@ -107,6 +108,8 @@ fn kt_main() {
             mp_refresh = 1
         } else if streq(argv[[i]], "--skip-microparse") {
             mp_skip = 1
+        } else if streq(argv[[i]], "--emit-llvm") {
+            emit_llvm = 1
         } else if argv[[i]][0] != 45 {  // '-'
             input = argv[[i]]
         } else {
@@ -144,7 +147,11 @@ fn kt_main() {
         perror(output)
         exit(1)
     }
-    codegen(program, out)
+    if emit_llvm {
+        codegen_llvm(program, out)
+    } else {
+        codegen(program, out)
+    }
     fclose(out)
 
     arena_free(arena)

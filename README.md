@@ -5,7 +5,7 @@ A systems programming language for x86-64. Compiles to static ELF binaries via m
 ## Features
 
 - **Immutable by default** -- opt into mutability with `mut`
-- **Close to the metal** -- direct x86-64 codegen, static linking via musl
+- **Close to the metal** -- direct x86-64 codegen or LLVM IR backend, static linking via musl
 - **AI-assisted** -- `@microparse` annotation generates code via Claude API at compile time
 - **Self-hosting** -- the compiler can compile itself
 - **Escape analysis** -- warns when returning pointers to stack-allocated buffers
@@ -29,7 +29,7 @@ The compiler calls Claude to fill in the function body, caches the result, and c
 
 ## Building
 
-Prerequisites: GCC, GNU make, GNU binutils (as, ld).
+Prerequisites: GCC, GNU make, GNU binutils (as, ld). For the LLVM backend: LLVM 18 (`llc-18`).
 
 ```bash
 # Build musl libc (one-time)
@@ -47,6 +47,10 @@ make test
 # Run tests with just one compiler
 make test-ktc
 make test-ktc-kt
+
+# Run tests with the LLVM IR backend
+make test-llvm        # C compiler, LLVM backend
+make test-llvm-kt     # self-hosted compiler, LLVM backend
 ```
 
 ## Usage
@@ -54,6 +58,9 @@ make test-ktc-kt
 ```bash
 # Compile a .kt file to x86-64 assembly
 ./build/ktc program.kt -o program.s
+
+# Or compile to LLVM IR
+./build/ktc program.kt -o program.ll --emit-llvm
 
 # Assemble and link against musl (the Makefile handles this for tests)
 as --64 -o program.o program.s
@@ -63,6 +70,9 @@ ld -static -o program \
     program.o \
     --start-group build/musl/lib/libc.a --end-group \
     build/musl/lib/crtn.o
+
+# For LLVM IR: compile .ll to .s first, then assemble and link as above
+llc-18 program.ll -o program.s
 
 ./program
 ```
@@ -90,7 +100,8 @@ Compiler flags:
 
 | Switch | Description |
 |---|---|
-| `-o <file>` | **(required)** Output path for the generated x86-64 assembly file. |
+| `-o <file>` | **(required)** Output path for the generated assembly (`.s`) or LLVM IR (`.ll`) file. |
+| `--emit-llvm` | Emit LLVM IR (`.ll`) instead of x86-64 assembly. Use `llc-18` to compile to assembly. |
 | `--microparse-refresh` | Force all `@microparse` annotations to re-call the Claude API, ignoring any cached `.kt.gen` files. |
 | `--skip-microparse` | Skip API calls entirely. Uses cached results from `.kt.gen` files; errors if no cache exists for an annotation. |
 
@@ -134,7 +145,15 @@ To compile offline (cache only, no API calls):
 ```
 kt/
   src/          # compiler source (C) — ktc
+    codegen.c         # x86-64 assembly backend
+    codegen_llvm.c    # LLVM IR backend
+    main.c            # compiler driver
+    ...
   kt-src/       # compiler source (kt) — ktc-kt (self-hosted)
+    codegen.kt        # x86-64 assembly backend
+    codegen_llvm.kt   # LLVM IR backend
+    main.kt           # compiler driver
+    ...
   tests/        # test .kt programs
   musl/         # musl libc (v1.2.5)
   build/        # build artifacts
@@ -149,7 +168,7 @@ kt/
 The compiler follows a traditional pipeline:
 
 ```
-source.kt --> Preprocessor --> Lexer --> Parser --> AST --> @microparse --> Escape analysis --> Codegen --> x86-64 assembly
+source.kt --> Preprocessor --> Lexer --> Parser --> AST --> @microparse --> Escape analysis --> Codegen
 ```
 
 - **Preprocessor** -- expands `#include` directives
@@ -157,10 +176,12 @@ source.kt --> Preprocessor --> Lexer --> Parser --> AST --> @microparse --> Esca
 - **Parser** -- Pratt parser (precedence climbing) for expressions, recursive descent for statements
 - **@microparse** -- calls Claude API for annotated functions, splices generated code into AST
 - **Escape analysis** -- warns on returning pointers to stack-allocated buffers
-- **Codegen** -- emits GAS x86-64 assembly (System V AMD64 ABI)
+- **Codegen** -- two backends:
+  - **x86-64** (default) -- emits GAS assembly directly (System V AMD64 ABI)
+  - **LLVM IR** (`--emit-llvm`) -- emits textual `.ll` files, compiled to assembly via `llc-18`
 - **Linking** -- static linking with musl's crt1.o + libc.a produces standalone ELF binaries
 
-Two compiler implementations exist:
+Two compiler implementations exist, each with both backends:
 - **ktc** (`src/*.c`) -- the original C implementation
 - **ktc-kt** (`kt-src/*.kt`) -- self-hosted, compiled by ktc
 

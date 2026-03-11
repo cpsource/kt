@@ -6,7 +6,7 @@ CC     := gcc
 CFLAGS := -std=c11 -Wall -Wextra -Werror -g -O2
 SRCS   := $(wildcard src/*.c)
 
-.PHONY: all musl ktc ktc-kt test test-ktc test-ktc-kt clean
+.PHONY: all musl ktc ktc-kt test test-ktc test-ktc-kt test-llvm test-llvm-kt clean
 
 all: musl ktc
 
@@ -91,6 +91,76 @@ test-ktc: ktc musl
 # --- Tests with ktc-kt (self-hosted compiler) ---
 test-ktc-kt: ktc-kt musl
 	$(call RUN_TESTS,ktc-kt,$(KT_BUILD)/ktc-kt,$(KT_BUILD))
+
+# --- Tests with ktc --emit-llvm (LLVM backend) ---
+test-llvm: ktc musl
+	@echo "=== Testing with ktc --emit-llvm ==="
+	@pass=0; fail=0; \
+	for f in $(TESTS); do \
+		base=$$(basename "$$f" .kt); \
+		expect_fail=0; \
+		case "$$base" in dangling) expect_fail=1;; esac; \
+		if $(BUILD)/ktc "$$f" -o $(BUILD)/test_llvm_$$base.ll --emit-llvm --skip-microparse 2>&1; then \
+			if llc-18 $(BUILD)/test_llvm_$$base.ll -o $(BUILD)/test_llvm_$$base.s 2>&1 && \
+			   as --64 -o $(BUILD)/test_llvm_$$base.o $(BUILD)/test_llvm_$$base.s && \
+			   ld -static -o $(BUILD)/test_llvm_$$base \
+				$(MUSL_LINK) $(BUILD)/test_llvm_$$base.o \
+				--start-group $(MUSL)/lib/libc.a --end-group \
+				$(MUSL)/lib/crtn.o; then \
+				if timeout 5 $(BUILD)/test_llvm_$$base >/dev/null 2>&1; then \
+					echo "  PASS  $$base"; pass=$$((pass+1)); \
+				else \
+					case "$$base" in overflow|smash) echo "  PASS  $$base (expected crash)"; pass=$$((pass+1));; \
+					*) echo "  FAIL  $$base (runtime)"; fail=$$((fail+1));; esac; \
+				fi; \
+			else \
+				echo "  FAIL  $$base (llc/link)"; fail=$$((fail+1)); \
+			fi; \
+		else \
+			if [ $$expect_fail -eq 1 ]; then \
+				echo "  PASS  $$base (expected compile error)"; pass=$$((pass+1)); \
+			else \
+				echo "  FAIL  $$base (compile)"; fail=$$((fail+1)); \
+			fi; \
+		fi; \
+	done; \
+	echo "ktc --emit-llvm: $$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
+
+# --- Tests with ktc-kt --emit-llvm (self-hosted LLVM backend) ---
+test-llvm-kt: ktc-kt musl
+	@echo "=== Testing with ktc-kt --emit-llvm ==="
+	@pass=0; fail=0; \
+	for f in $(TESTS); do \
+		base=$$(basename "$$f" .kt); \
+		expect_fail=0; \
+		case "$$base" in dangling) expect_fail=1;; esac; \
+		if $(KT_BUILD)/ktc-kt "$$f" -o $(KT_BUILD)/test_llvm_$$base.ll --emit-llvm --skip-microparse 2>&1; then \
+			if llc-18 $(KT_BUILD)/test_llvm_$$base.ll -o $(KT_BUILD)/test_llvm_$$base.s 2>&1 && \
+			   as --64 -o $(KT_BUILD)/test_llvm_$$base.o $(KT_BUILD)/test_llvm_$$base.s && \
+			   ld -static -o $(KT_BUILD)/test_llvm_$$base \
+				$(MUSL_LINK) $(KT_BUILD)/test_llvm_$$base.o \
+				--start-group $(MUSL)/lib/libc.a --end-group \
+				$(MUSL)/lib/crtn.o; then \
+				if timeout 5 $(KT_BUILD)/test_llvm_$$base >/dev/null 2>&1; then \
+					echo "  PASS  $$base"; pass=$$((pass+1)); \
+				else \
+					case "$$base" in overflow|smash) echo "  PASS  $$base (expected crash)"; pass=$$((pass+1));; \
+					*) echo "  FAIL  $$base (runtime)"; fail=$$((fail+1));; esac; \
+				fi; \
+			else \
+				echo "  FAIL  $$base (llc/link)"; fail=$$((fail+1)); \
+			fi; \
+		else \
+			if [ $$expect_fail -eq 1 ]; then \
+				echo "  PASS  $$base (expected compile error)"; pass=$$((pass+1)); \
+			else \
+				echo "  FAIL  $$base (compile)"; fail=$$((fail+1)); \
+			fi; \
+		fi; \
+	done; \
+	echo "ktc-kt --emit-llvm: $$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
 
 clean:
 	rm -rf $(BUILD)

@@ -6,6 +6,7 @@
 #include "lexer.h"
 #include "parser.h"
 #include "codegen.h"
+#include "codegen_llvm.h"
 #include "microparse.h"
 #include "check.h"
 
@@ -99,6 +100,7 @@ int main(int argc, char **argv) {
     const char *output = NULL;
     int mp_refresh = 0;
     int mp_skip = 0;
+    int emit_llvm = 0;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
@@ -107,6 +109,8 @@ int main(int argc, char **argv) {
             mp_refresh = 1;
         } else if (strcmp(argv[i], "--skip-microparse") == 0) {
             mp_skip = 1;
+        } else if (strcmp(argv[i], "--emit-llvm") == 0) {
+            emit_llvm = 1;
         } else if (argv[i][0] != '-') {
             input = argv[i];
         } else {
@@ -140,7 +144,10 @@ int main(int argc, char **argv) {
 
     FILE *out = fopen(output, "w");
     if (!out) { perror(output); return 1; }
-    codegen(program, out);
+    if (emit_llvm)
+        codegen_llvm(program, out);
+    else
+        codegen(program, out);
     fclose(out);
 
     arena_free(&arena);
