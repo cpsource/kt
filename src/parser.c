@@ -79,7 +79,7 @@ static AstNode *parse_block(Parser *p);
 /* Precedence levels (binding power, higher = tighter) */
 static int prefix_bp(TokenKind k) {
     switch (k) {
-    case TOK_MINUS: case TOK_NOT: case TOK_TILDE: case TOK_STAR: case TOK_AMP:
+    case TOK_MINUS: case TOK_NOT: case TOK_TILDE: case TOK_AT: case TOK_AMP:
         return 21;
     default: return -1;
     }
@@ -163,11 +163,11 @@ static AstNode *parse_primary(Parser *p) {
         n->unary.operand = parse_expr_bp(p, prefix_bp(TOK_TILDE));
         return n;
     }
-    if (check(p, TOK_STAR)) {
+    if (check(p, TOK_AT)) {
         next(p);
         AstNode *n = ast_new(p->arena, NODE_UNARY, sl);
         n->unary.op = UNOP_DEREF;
-        n->unary.operand = parse_expr_bp(p, prefix_bp(TOK_STAR));
+        n->unary.operand = parse_expr_bp(p, prefix_bp(TOK_AT));
         return n;
     }
     if (check(p, TOK_AMP)) {

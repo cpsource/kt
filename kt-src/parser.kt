@@ -73,7 +73,7 @@ fn parse_type(p: &mut Parser) -> &str {
 // ---- Precedence for Pratt parser ----
 
 fn prefix_bp(k: TokenKind) -> i32 {
-    if k == TokenKind::MINUS || k == TokenKind::NOT || k == TokenKind::TILDE || k == TokenKind::STAR || k == TokenKind::AMP {
+    if k == TokenKind::MINUS || k == TokenKind::NOT || k == TokenKind::TILDE || k == TokenKind::AT || k == TokenKind::AMP {
         return 21
     }
     return -1
@@ -237,12 +237,12 @@ fn parse_primary(p: &mut Parser) -> *AstNode {
         return n
     }
 
-    // Prefix: * (deref)
-    if check(p, TokenKind::STAR) {
+    // Prefix: @ (deref)
+    if check(p, TokenKind::AT) {
         next(p)
         let n = ast_new(p.arena, NodeKind::UNARY, sl)
         n.d0 = 3  // UNOP_DEREF
-        n.d1 = parse_expr_bp(p, prefix_bp(TokenKind::STAR))
+        n.d1 = parse_expr_bp(p, prefix_bp(TokenKind::AT))
         return n
     }
 

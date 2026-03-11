@@ -63,7 +63,7 @@ false
 ```
 ( )  { }  [ ]  [[ ]]  // grouping / indexing
 ,    :                  // separators (semicolons are ignored)
-@                       // annotations
+@                       // dereference / annotations
 .                       // member access
 ::                      // path separator (Enum::Variant)
 ```
@@ -286,7 +286,7 @@ All binary operators are left-associative.
 -x          // negate
 !x          // logical not
 ~x          // bitwise not
-*p          // dereference
+@p          // dereference
 &x          // address of
 &mut x      // mutable address of
 ```
@@ -308,6 +308,7 @@ let p = malloc(size)
 x = 10
 arr[[i]] = value
 node.field = expr
+@p = 42             // dereference assignment
 ```
 
 ## Preprocessor
@@ -393,7 +394,7 @@ expr        = expr_bp(0)                 // Pratt parser, min binding power 0
 primary     = "-" expr                   // unary negate
             | "!" expr                   // logical not
             | "~" expr                   // bitwise not
-            | "*" expr                   // dereference
+            | "@" expr                   // dereference
             | "&" "mut"? expr            // address of
             | "(" expr ")"              // grouping
             | "if" expr block ("else" (if_expr | block))?
